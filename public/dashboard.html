@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="dashboard-container">
+    <div class="dash-box">
+      <h3>Manual Control</h3>
+      <button onclick="sendCommand('F')">Forward</button>
+      <button onclick="sendCommand('B')">Backward</button>
+      <button onclick="sendCommand('L')">Left</button>
+      <button onclick="sendCommand('R')">Right</button>
+      <button onclick="sendCommand('S')" style="background-color: #dc3545">STOP</button>
+      <hr />
+      <button onclick="sendCommand('P')">Pickup</button>
+      <button onclick="sendCommand('D')">Drop</button>
+      <button onclick="sendCommand('X')">Reset Arm</button>
+      <br /><br />
+      <button onclick="logout()" style="background-color: #6c757d">Logout</button>
+    </div>
+
+    <div class="dash-box">
+      <h3>Health & Accuracy</h3>
+      <div class="health-item">
+        <span>Motors:</span> <strong id="health_motors">--</strong>
+      </div>
+      <div class="health-item">
+        <span>Arm:</span> <strong id="health_arm">--</strong>
+      </div>
+      <div class="health-item">
+        <span>Detection Service:</span> <strong id="health_ml">--</strong>
+      </div>
+      <hr />
+      <h4>ML Accuracy</h4>
+      <span id="accuracy_percent">0</span>%
+    </div>
+
+    <div class="dash-box">
+      <h3>Tool Activity Chart</h3>
+      <canvas id="activityChart"></canvas>
+    </div>
+
+    <div class="dash-box">
+      <h3>ESP32 Live Stream</h3>
+      <img src="http://192.168.1.10/stream" width="640" height="480" />
+    </div>
+
+    <div class="dash-box">
+      <h3>Hardware Template</h3>
+      <div class="template-diagram">
+        <p>[ESP32] --- [Motor Driver] --- [Motors]</p>
+        <p>|</p>
+        <p>[Servo Controller] --- [Arm Servos]</p>
+        <p>|</p>
+        <p>[MQTT Broker]</p>
+      </div>
+    </div>
+
+    <div class="dash-box">
+      <h3>ML Detections</h3>
+      <ul id="detectionsList">
+        <li>Waiting for detections...</li>
+      </ul>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // 1. Token Check
+    const token = localStorage.getItem('trashcan_token');
+    if (!token) {
+      alert('Please login first');
+      window.location.href = '/login.html';
+    }
+
+    // 2. Connect to Server
+    const socket = io();
+    socket.on('connect', () => console.log('Socket connected:', socket.id));
+    socket.on('error_message', (msg) => {
+      console.warn('Server error:', msg?.message || msg);
+    });
+
+    // 3. Manual Control
+    function sendCommand(cmd) {
+      socket.emit('manual_control', { command: cmd, token: token });
+    }
+    function logout() {
+      localStorage.removeItem('trashcan_token');
+      window.location.href = '/login.html';
+    }
+
+    // 4. ML Feedback (with token)
+    function sendFeedback(id, feedback) {
+      socket.emit('ml_feedback', { id: id, feedback: feedback, token: token });
+      const btnGroup = document.getElementById(`feedback-${id}`);
+      if (btnGroup) {
+        btnGroup.innerHTML = `<em>${feedback}</em>`;
+      }
+    }
+
+    // --- 5. Socket.IO Listeners ---
+
+    // Health Updates
+    socket.on('health_update', (data) => {
+      document.getElementById('health_motors').textContent = data.motors || '--';
+      document.getElementById('health_arm').textContent = data.arm || '--';
+      document.getElementById('health_ml').textContent = data.ml_service || '--';
+    });
+
+    // Accuracy Update
+    socket.on('accuracy_update', (data) => {
+      document.getElementById('accuracy_percent').textContent = data.accuracy || 0;
+    });
+
+    // ML Detection Update
+    socket.on('detection_update', (data) => {
+      const list = document.getElementById('detectionsList');
+      if (list.children.length === 1 && list.children[0].textContent.includes('Waiting')) {
+        list.innerHTML = '';
+      }
+      const item = document.createElement('li');
+      item.innerHTML = `
+        <span>${data.item} (${data.confidence}%)</span>
+        <span class="feedback-buttons" id="feedback-${data.id}">
+          <button class="btn-correct" onclick="sendFeedback(${data.id}, 'correct')">✔️</button>
+          <button class="btn-incorrect" onclick="sendFeedback(${data.id}, 'incorrect')">❌</button>
+        </span>
+      `;
+      list.prepend(item);
+    });
+
+    // --- 6. Chart.js Setup ---
+    const ctx = document.getElementById('activityChart').getContext('2d');
+    const activityChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ['Arm Moves', 'Motor Runs', 'Detections'],
+        datasets: [
+          {
+            label: '# of Activities',
+            data: [0, 0, 0],
+            backgroundColor: [
+              'rgba(255, 99, 132, 0.2)',
+              'rgba(54, 162, 235, 0.2)',
+              'rgba(255, 206, 86, 0.2)'
+            ],
+            borderColor: [
+              'rgba(255, 99, 132, 1)',
+              'rgba(54, 162, 235, 1)',
+              'rgba(255, 206, 86, 1)'
+            ],
+            borderWidth: 1
+          }
+        ]
+      },
+      options: { scales: { y: { beginAtZero: true } } }
+    });
+
+    // Chart Updates
+    socket.on('chart_update', (data) => {
+      if (data.tool === 'arm') activityChart.data.datasets[0].data[0]++;
+      else if (data.tool === 'motor') activityChart.data.datasets[0].data[1]++;
+      else if (data.tool === 'detection') activityChart.data.datasets[0].data[2]++;
+      activityChart.update();
+    });
+  </script>
+</body>
+</html>
