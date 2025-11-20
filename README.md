@@ -416,16 +416,4 @@ Nano firmware uses `cx` vs `iw/2` to steer, `w` as distance cue.
 
 ---
 
-## License
-
-This project is based on Edge Impulse Arduino examples (MIT License).  
-All additional code, wiring diagrams, and documentation in this repository are released under the MIT License unless otherwise specified.
-```
-
-You can now:
-
-1. Create a GitHub repo.
-2. Add your `esp32cam` sketch file and `nano` sketch file.
-3. Save this text as `README.md` in the root of the repo.
-
-If you want, I can also generate a shorter Sinhala‑only README for a report/assignment, while keeping this detailed English version for GitHub.
+, I can also generate a shorter Sinhala‑only README for a report/assignment, while keeping this detailed English version for GitHub.
