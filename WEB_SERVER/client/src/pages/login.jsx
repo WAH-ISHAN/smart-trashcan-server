@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+const BACKEND_URL = 'http://localhost:3001'; // <-- add backend URL here
+
 const Login = () => {
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('1234'); // matches backend dummy user
   const [message, setMessage] = useState('');
   const navigate = useNavigate();
 
@@ -12,7 +14,7 @@ const Login = () => {
     setMessage('');
 
     try {
-      const res = await fetch('/login', {
+      const res = await fetch(`${BACKEND_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -24,11 +26,12 @@ const Login = () => {
       if (res.ok) {
         const data = await res.json();
         localStorage.setItem('trashcan_token', data.token);
-        navigate('/dashboard');
+        navigate('/dashboard', { replace: true });
       } else {
-        setMessage('Error: Invalid username or password.');
+        const errData = await res.json().catch(() => null);
+        setMessage(errData?.message || 'Error: Invalid username or password.');
       }
-    } catch (err) {
+    } catch {
       setMessage('Error: Could not connect to server.');
     }
   };
@@ -39,7 +42,6 @@ const Login = () => {
       <form id="loginForm" onSubmit={handleSubmit}>
         <input
           type="text"
-          id="username"
           placeholder="Username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
@@ -47,7 +49,6 @@ const Login = () => {
         />
         <input
           type="password"
-          id="password"
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -55,7 +56,7 @@ const Login = () => {
         />
         <button type="submit">Login</button>
       </form>
-      <p id="message">{message}</p>
+      <p>{message}</p>
     </div>
   );
 };
