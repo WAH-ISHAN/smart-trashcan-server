@@ -3,22 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Chart from 'chart.js/auto';
 
+const ESP32_BASE_URL = 'http://192.168.4.1'; // ESP32-CAM IP (AP mode)
+
 const Dashboard = () => {
   const navigate = useNavigate();
 
-  // Health & accuracy
   const [health, setHealth] = useState({
     motors: '--',
     arm: '--',
-    ml_service: '--'
+    ml_service: '--',
   });
   const [accuracy, setAccuracy] = useState(0);
-
-  // Detections list
   const [detections, setDetections] = useState([]);
-
-  // Activity counts: [Arm Moves, Motor Runs, Detections]
   const [activityCounts, setActivityCounts] = useState([0, 0, 0]);
+  const [frameTs, setFrameTs] = useState(Date.now());
 
   const socketRef = useRef(null);
   const chartCanvasRef = useRef(null);
@@ -33,7 +31,7 @@ const Dashboard = () => {
       return;
     }
 
-    const socket = io(); // will go through Vite proxy in dev, same-origin in prod
+    const socket = io(); // same-origin/proxy
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -44,21 +42,18 @@ const Dashboard = () => {
       console.warn('Server error:', msg?.message || msg);
     });
 
-    // Health updates
     socket.on('health_update', (data) => {
       setHealth({
         motors: data.motors || '--',
         arm: data.arm || '--',
-        ml_service: data.ml_service || '--'
+        ml_service: data.ml_service || '--',
       });
     });
 
-    // Accuracy updates
     socket.on('accuracy_update', (data) => {
       setAccuracy(data?.accuracy || 0);
     });
 
-    // New detection
     socket.on('detection_update', (data) => {
       setDetections((prev) => {
         const real = prev.filter((d) => !d.__placeholder);
@@ -66,7 +61,6 @@ const Dashboard = () => {
       });
     });
 
-    // Chart updates
     socket.on('chart_update', (data) => {
       setActivityCounts((prev) => {
         const next = [...prev];
@@ -77,12 +71,10 @@ const Dashboard = () => {
       });
     });
 
-    return () => {
-      socket.disconnect();
-    };
+    return () => socket.disconnect();
   }, [navigate]);
 
-  // Init Chart.js once
+  // Init Chart.js
   useEffect(() => {
     if (!chartCanvasRef.current || chartInstanceRef.current) return;
 
@@ -98,18 +90,18 @@ const Dashboard = () => {
             backgroundColor: [
               'rgba(255, 99, 132, 0.2)',
               'rgba(54, 162, 235, 0.2)',
-              'rgba(255, 206, 86, 0.2)'
+              'rgba(255, 206, 86, 0.2)',
             ],
             borderColor: [
               'rgba(255, 99, 132, 1)',
               'rgba(54, 162, 235, 1)',
-              'rgba(255, 206, 86, 1)'
+              'rgba(255, 206, 86, 1)',
             ],
-            borderWidth: 1
-          }
-        ]
+            borderWidth: 1,
+          },
+        ],
       },
-      options: { scales: { y: { beginAtZero: true } } }
+      options: { scales: { y: { beginAtZero: true } } },
     });
 
     chartInstanceRef.current = chart;
@@ -118,15 +110,23 @@ const Dashboard = () => {
       chart.destroy();
       chartInstanceRef.current = null;
     };
-  }, []); // mount only
+  }, []);
 
-  // Update chart when counts change
+  // Update chart on counts change
   useEffect(() => {
     const chart = chartInstanceRef.current;
     if (!chart) return;
     chart.data.datasets[0].data = activityCounts;
     chart.update();
   }, [activityCounts]);
+
+  // Auto-refresh ESP32 snapshot
+  useEffect(() => {
+    const id = setInterval(() => {
+      setFrameTs(Date.now());
+    }, 300); // ~3 fps
+    return () => clearInterval(id);
+  }, []);
 
   const sendCommand = (cmd) => {
     const socket = socketRef.current;
@@ -149,9 +149,7 @@ const Dashboard = () => {
     socket.emit('ml_feedback', { id, feedback, token });
 
     setDetections((prev) =>
-      prev.map((det) =>
-        det.id === id ? { ...det, status: feedback } : det
-      )
+      prev.map((det) => (det.id === id ? { ...det, status: feedback } : det))
     );
   };
 
@@ -193,33 +191,30 @@ const Dashboard = () => {
       <div className="dash-box">
         <h3>Health &amp; Accuracy</h3>
         <div className="health-item">
-          <span>Motors:</span>{' '}
-          <strong id="health_motors">{health.motors}</strong>
+          <span>Motors:</span> <strong>{health.motors}</strong>
         </div>
         <div className="health-item">
-          <span>Arm:</span>{' '}
-          <strong id="health_arm">{health.arm}</strong>
+          <span>Arm:</span> <strong>{health.arm}</strong>
         </div>
         <div className="health-item">
-          <span>Detection Service:</span>{' '}
-          <strong id="health_ml">{health.ml_service}</strong>
+          <span>Detection Service:</span> <strong>{health.ml_service}</strong>
         </div>
         <hr />
         <h4>ML Accuracy</h4>
-        <span id="accuracy_percent">{accuracy}</span>%
+        <span>{accuracy}</span>%
       </div>
 
       {/* Activity Chart */}
       <div className="dash-box">
         <h3>Tool Activity Chart</h3>
-        <canvas id="activityChart" ref={chartCanvasRef} />
+        <canvas ref={chartCanvasRef} />
       </div>
 
       {/* ESP32 Stream */}
       <div className="dash-box">
         <h3>ESP32 Live Stream</h3>
         <img
-          src="http://192.168.1.10/stream"
+          src={`${ESP32_BASE_URL}/jpg?t=${frameTs}`}
           width="640"
           height="480"
           alt="ESP32 live stream"
@@ -234,14 +229,14 @@ const Dashboard = () => {
           <p>|</p>
           <p>[Servo Controller] --- [Arm Servos]</p>
           <p>|</p>
-          <p>[MQTT Broker]</p>
+          <p>[MQTT / Socket.IO Server]</p>
         </div>
       </div>
 
       {/* ML Detections */}
       <div className="dash-box">
         <h3>ML Detections</h3>
-        <ul id="detectionsList">
+        <ul>
           {detectionItems.map((det) =>
             det.__placeholder ? (
               <li key="placeholder">{det.text}</li>
@@ -250,27 +245,20 @@ const Dashboard = () => {
                 <span>
                   {det.item} ({det.confidence}%)
                 </span>
-                <span
-                  className="feedback-buttons"
-                  id={`feedback-${det.id}`}
-                >
+                <span className="feedback-buttons">
                   {det.status && det.status !== 'pending' ? (
                     <em>{det.status}</em>
                   ) : (
                     <>
                       <button
                         className="btn-correct"
-                        onClick={() =>
-                          sendFeedback(det.id, 'correct')
-                        }
+                        onClick={() => sendFeedback(det.id, 'correct')}
                       >
-                        ✔️
+                        ✔
                       </button>
                       <button
                         className="btn-incorrect"
-                        onClick={() =>
-                          sendFeedback(det.id, 'incorrect')
-                        }
+                        onClick={() => sendFeedback(det.id, 'incorrect')}
                       >
                         ❌
                       </button>
