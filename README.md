@@ -415,5 +415,3 @@ Nano firmware uses `cx` vs `iw/2` to steer, `w` as distance cue.
 - Separate “recyclable / non‑recyclable” bins with different labels.
 
 ---
-
-, I can also generate a shorter Sinhala‑only README for a report/assignment, while keeping this detailed English version for GitHub.
