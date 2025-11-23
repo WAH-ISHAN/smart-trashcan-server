@@ -1,154 +1,127 @@
+// =========================================
+// Smart Trash Arm - Arduino + 4 Servos
+// - Gets trigger pulse on D2 from car Arduino
+// - Sequence: pick cup in front, rotate to bin, drop, go home
+// =========================================
 #include <Servo.h>
 
-// ---- Servo Pins (4 DOF Arm) ----
-#define SERVO_BASE 6
-#define SERVO_SHOULDER 9
-#define SERVO_ELBOW 10
-#define SERVO_GRIPPER 11
+// ---- Pins ----
+const int TRIGGER_PIN   = 2;  // from car Arduino D8
+const int BASE_PIN      = 9;
+const int SHOULDER_PIN  = 10;
+const int ELBOW_PIN     = 11;
+const int GRIPPER_PIN   = 6;
 
-Servo sBase, sShoulder, sElbow, sGrip;
+// ---- Servos ----
+Servo baseServo;
+Servo shoulderServo;
+Servo elbowServo;
+Servo gripperServo;
 
-// ---- Configuration Variables ----
-// Servo Angle Calibration (Tune these for your arm's geometry)
-const int BASE_HOME_ANGLE = 90;
-const int SHOULDER_HOME_ANGLE = 100;
-const int ELBOW_HOME_ANGLE = 60;
-const int GRIPPER_OPEN = 40;
-const int GRIPPER_CLOSE = 90;
+// ---- Angles (TUNE these for your arm) ----
+// Home pose
+int BASE_HOME      = 90;
+int SHOULDER_HOME  = 90;
+int ELBOW_HOME     = 90;
+int GRIPPER_OPEN   = 40;   // open gripper
+int GRIPPER_CLOSE  = 90;   // close gripper
 
-const int SHOULDER_PICK_ANGLE = 130;
-const int ELBOW_PICK_ANGLE = 80;
+// Pick position (cup in front of car)
+int SHOULDER_PICK  = 120;  // arm down
+int ELBOW_PICK     = 60;   // adjust so gripper touches ground
 
-// =========================================================
-// ---- Servo / Arm Control Functions ----
-// =========================================================
+// Bin position (dustbin fixed on right side)
+int BASE_BIN       = 30;   // rotate base to bin side
+int SHOULDER_BIN   = 100;  // slightly down
+int ELBOW_BIN      = 80;   // adjust for bin height
 
-void servoInit()
-{
-    sBase.attach(SERVO_BASE);
-    sShoulder.attach(SERVO_SHOULDER);
-    sElbow.attach(SERVO_ELBOW);
-    sGrip.attach(SERVO_GRIPPER);
+int lastTriggerState = LOW;
+
+// smooth move helper
+void moveServoSmooth(Servo &s, int from, int to, int stepDelay = 10) {
+  int step = (to > from) ? 1 : -1;
+  for (int pos = from; pos != to; pos += step) {
+    s.write(pos);
+    delay(stepDelay);
+  }
+  s.write(to);
 }
 
-void openGripper()
-{
-    sGrip.write(GRIPPER_OPEN);
-    delay(300);
-}
-void closeGripper()
-{
-    sGrip.write(GRIPPER_CLOSE);
-    delay(300);
+void goHome() {
+  baseServo.write(BASE_HOME);
+  shoulderServo.write(SHOULDER_HOME);
+  elbowServo.write(ELBOW_HOME);
+  gripperServo.write(GRIPPER_OPEN);
 }
 
-void armHome()
-{
-    // Forward direction, medium height (safe/ready position)
-    sBase.write(BASE_HOME_ANGLE);
-    sShoulder.write(SHOULDER_HOME_ANGLE);
-    sElbow.write(ELBOW_HOME_ANGLE);
-    openGripper();
-    delay(600);
+// full sequence: pick cup and drop to bin
+void pickupAndDrop() {
+  Serial.println("Arm: sequence start");
+
+  // 1) ensure home + gripper open
+  goHome();
+  delay(500);
+
+  // 2) go down to cup
+  moveServoSmooth(shoulderServo, SHOULDER_HOME, SHOULDER_PICK, 15);
+  moveServoSmooth(elbowServo,    ELBOW_HOME,    ELBOW_PICK,    15);
+  delay(300);
+
+  // 3) close gripper (grab cup)
+  moveServoSmooth(gripperServo, GRIPPER_OPEN, GRIPPER_CLOSE, 10);
+  delay(400);
+
+  // 4) lift up
+  moveServoSmooth(elbowServo,    ELBOW_PICK,    ELBOW_HOME,    15);
+  moveServoSmooth(shoulderServo, SHOULDER_PICK, SHOULDER_HOME, 15);
+  delay(300);
+
+  // 5) rotate to bin side
+  moveServoSmooth(baseServo, BASE_HOME, BASE_BIN, 15);
+  delay(300);
+
+  // 6) move to bin-dump pose
+  moveServoSmooth(shoulderServo, SHOULDER_HOME, SHOULDER_BIN, 15);
+  moveServoSmooth(elbowServo,    ELBOW_HOME,    ELBOW_BIN,     15);
+  delay(300);
+
+  // 7) open gripper -> drop cup
+  moveServoSmooth(gripperServo, GRIPPER_CLOSE, GRIPPER_OPEN, 10);
+  delay(500);
+
+  // 8) back to home pose
+  moveServoSmooth(elbowServo,    ELBOW_BIN,     ELBOW_HOME,    15);
+  moveServoSmooth(shoulderServo, SHOULDER_BIN,  SHOULDER_HOME, 15);
+  moveServoSmooth(baseServo,     BASE_BIN,      BASE_HOME,     15);
+
+  Serial.println("Arm: sequence done");
 }
 
-// Lowers arm to pick up object from ground level
-void armPickPoseDown()
-{
-    sShoulder.write(SHOULDER_PICK_ANGLE);
-    sElbow.write(ELBOW_PICK_ANGLE);
-    delay(700);
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(TRIGGER_PIN, INPUT);  // connected from car D8 (no pullup here; use series resistor if needed)
+
+  baseServo.attach(BASE_PIN);
+  shoulderServo.attach(SHOULDER_PIN);
+  elbowServo.attach(ELBOW_PIN);
+  gripperServo.attach(GRIPPER_PIN);
+
+  goHome();
+  delay(1000);
 }
 
-// Lifts object to a safe height for driving
-void armCarryPose()
-{
-    sShoulder.write(SHOULDER_HOME_ANGLE);
-    sElbow.write(ELBOW_HOME_ANGLE);
-    delay(700);
-}
+void loop() {
+  int state = digitalRead(TRIGGER_PIN);
 
-void pickSequence()
-{
-    Serial.println("Starting PICK sequence...");
-    armHome();
+  // detect rising edge: LOW → HIGH
+  if (state == HIGH && lastTriggerState == LOW) {
+    // got trigger from car -> run sequence
+    pickupAndDrop();
+  }
 
-    // 1. Move to picking pose (down)
-    openGripper();
-    armPickPoseDown();
+  lastTriggerState = state;
 
-    // 2. Grasp object
-    closeGripper();
-
-    // 3. Lift to carry pose
-    armCarryPose();
-    Serial.println("PICK sequence complete.");
-}
-
-void dropSequence()
-{
-    Serial.println("Starting DROP sequence...");
-
-    // 1. Turn base servo slightly to side (assuming dustbin is to the right)
-    sBase.write(140); // Tune angle for right-side drop
-    delay(500);
-
-    // 2. Lower arm over dustbin
-    sShoulder.write(120);
-    sElbow.write(80);
-    delay(700);
-
-    // 3. Release object
-    openGripper();
-    delay(400);
-
-    // 4. Return to home position
-    armHome();
-    Serial.println("DROP sequence complete.");
-}
-
-// =========================================================
-// ---- Setup & Loop ----
-// =========================================================
-
-void setup()
-{
-    Serial.begin(115200);
-    servoInit();
-    armHome(); // Arm goes to default position on start
-
-    Serial.println("Arm Ready. Commands: P, D, O, C, H");
-}
-
-void loop()
-{
-    if (Serial.available())
-    {
-        char c = Serial.read();
-
-        // Arm Commands
-        if (c == 'P')
-        {
-            pickSequence();
-        }
-        else if (c == 'D')
-        {
-            dropSequence();
-        }
-        else if (c == 'O')
-        {
-            openGripper();
-            Serial.println("Gripper OPEN");
-        }
-        else if (c == 'C')
-        {
-            closeGripper();
-            Serial.println("Gripper CLOSE");
-        }
-        else if (c == 'H')
-        {
-            armHome();
-            Serial.println("Arm HOME");
-        }
-    }
+  // small delay to avoid jitter
+  delay(20);
 }
