@@ -1,8 +1,11 @@
+// Dashboard.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Chart from 'chart.js/auto';
 
+// ====== IMPORTANT: no process.env here ======
+const SOCKET_URL = 'http://localhost:3001';   // Node backend / Socket.IO URL
 const ESP32_BASE_URL = 'http://192.168.4.1'; // ESP32-CAM IP (AP mode)
 
 const Dashboard = () => {
@@ -31,11 +34,17 @@ const Dashboard = () => {
       return;
     }
 
-    const socket = io(); // same-origin/proxy
+    const socket = io(SOCKET_URL, {
+      transports: ['websocket', 'polling'],
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
       console.log('Socket connected:', socket.id);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
     });
 
     socket.on('error_message', (msg) => {
@@ -57,7 +66,7 @@ const Dashboard = () => {
     socket.on('detection_update', (data) => {
       setDetections((prev) => {
         const real = prev.filter((d) => !d.__placeholder);
-        return [data, ...real];
+        return [data, ...real].slice(0, 20); // recent 20 only
       });
     });
 
@@ -71,10 +80,13 @@ const Dashboard = () => {
       });
     });
 
-    return () => socket.disconnect();
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
   }, [navigate]);
 
-  // Init Chart.js
+  // Init Chart.js once
   useEffect(() => {
     if (!chartCanvasRef.current || chartInstanceRef.current) return;
 
@@ -112,7 +124,7 @@ const Dashboard = () => {
     };
   }, []);
 
-  // Update chart on counts change
+  // Update chart when counts change
   useEffect(() => {
     const chart = chartInstanceRef.current;
     if (!chart) return;
@@ -120,7 +132,7 @@ const Dashboard = () => {
     chart.update();
   }, [activityCounts]);
 
-  // Auto-refresh ESP32 snapshot
+  // Auto-refresh ESP32 snapshot (change URL param)
   useEffect(() => {
     const id = setInterval(() => {
       setFrameTs(Date.now());
@@ -179,10 +191,7 @@ const Dashboard = () => {
         <button onClick={() => sendCommand('X')}>Reset Arm</button>
         <br />
         <br />
-        <button
-          onClick={logout}
-          style={{ backgroundColor: '#6c757d' }}
-        >
+        <button onClick={logout} style={{ backgroundColor: '#6c757d' }}>
           Logout
         </button>
       </div>
@@ -225,11 +234,9 @@ const Dashboard = () => {
       <div className="dash-box">
         <h3>Hardware Template</h3>
         <div className="template-diagram">
-          <p>[ESP32] --- [Motor Driver] --- [Motors]</p>
-          <p>|</p>
-          <p>[Servo Controller] --- [Arm Servos]</p>
-          <p>|</p>
-          <p>[MQTT / Socket.IO Server]</p>
+          <p>[ESP32 (Cam)] --- WiFi --- [Router] --- [Backend / MQTT]</p>
+          <p>[ESP32 (Motors)] --- [Motor Driver] --- [Motors]</p>
+          <p>[ESP32 (Arm)] --- [Servo Driver] --- [Arm Servos]</p>
         </div>
       </div>
 
