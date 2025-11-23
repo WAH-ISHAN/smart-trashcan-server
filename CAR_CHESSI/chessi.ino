@@ -1,15 +1,20 @@
 // =========================================
-// Smart Trash Car - ESP32-CAM + Arduino + L9110
+// Smart Trash Car - Arduino (UNO/Nano) + L9110 + ESP32-CAM
 // - L9110: 2 DC motors (left + right)
-// - Arduino UNO / Nano
-// - ESP32-CAM sends: BOX,cx=..,w=..,iw=..,label=..,score=..
+// - ESP32-CAM sends over Serial: 
+//     BOX,cx=..,w=..,iw=..,label=..,score=..
+// - This sketch: car auto moves to CUP, then
+//   triggers arm controller (D8 pulse) to pick+drop.
 // =========================================
 
 // ----- PIN CONFIG (Arduino -> L9110) -----
 const int LEFT_IN1  = 2;   // L9110 A-1A  (Left motor)
 const int LEFT_IN2  = 3;   // L9110 A-1B  (Left motor)
 const int RIGHT_IN1 = 4;   // L9110 B-1A  (Right motor)
-const int RIGHT_IN2 = 5;  // L9110 B-1B  (Right motor)
+const int RIGHT_IN2 = 5;   // L9110 B-1B  (Right motor)
+
+// ----- ARM TRIGGER PIN -----
+const int ARM_TRIGGER_PIN = 8; // Connected to Arm Arduino D2
 
 // ----- MODES -----
 enum Mode {
@@ -23,13 +28,12 @@ Mode mode = MODE_SCAN;
 unsigned long lastDetectionTime = 0;
 const unsigned long lostTimeout = 1500;    // 1.5s no detection -> back to SCAN
 
-const float scoreThreshold     = 0.6;      // minimum confidence
-const float stopWidthRatio     = 0.7;      // w > 0.7 * iw -> consider "close"
+const float scoreThreshold      = 0.6;     // minimum confidence
+const float stopWidthRatio      = 0.7;     // w > 0.7 * iw -> consider "close"
 const float centerDeadbandRatio = 0.15;    // ±15% of width -> "center" zone
 
-// Only follow specific label? put name here (e.g. "bottle").
-// If empty string -> accept all labels.
-String targetLabel = "";   // example: "bottle";
+// Only follow cup label
+String targetLabel = "cup";   // Edge Impulse label name (change if needed)
 
 String line = "";
 
@@ -40,6 +44,10 @@ void setupMotors() {
   pinMode(LEFT_IN2,  OUTPUT);
   pinMode(RIGHT_IN1, OUTPUT);
   pinMode(RIGHT_IN2, OUTPUT);
+
+  pinMode(ARM_TRIGGER_PIN, OUTPUT);
+  digitalWrite(ARM_TRIGGER_PIN, LOW);
+
   stopMotors();
 }
 
@@ -60,7 +68,7 @@ void forward() {
   digitalWrite(RIGHT_IN2, LOW);
 }
 
-// Car backward (nijama ona nam)
+// Car backward (optional)
 void backward() {
   digitalWrite(LEFT_IN1, LOW);
   digitalWrite(LEFT_IN2, HIGH);
@@ -120,15 +128,13 @@ String getStringValue(String s, String key) {
 void processLine(String s) {
   s.trim();
   if (!s.startsWith("BOX")) {
-    // Not our message; ignore
-    return;
+    return; // not our message
   }
 
-  // Debug to PC serial monitor (TX only)
   Serial.println("DBG: " + s);
 
   if (s == "BOX,none") {
-    // No object in this frame - just rely on timeout logic
+    // no object; timeout logic uses lastDetectionTime
     return;
   }
 
@@ -140,53 +146,54 @@ void processLine(String s) {
   String label = getStringValue(s, "label=");
 
   if (cx < 0 || iw <= 0) {
-    // Parsing error
-    return;
+    return; // parsing error
   }
 
   lastDetectionTime = millis();
 
-  // Confidence threshold
-  if (score < scoreThreshold) {
-    return;
-  }
+  // 1) Confidence check
+  if (score < scoreThreshold) return;
 
-  // Label filter (if targetLabel set)
-  if (targetLabel.length() > 0 && label != targetLabel) {
-    return;
-  }
+  // 2) Label filter (only cup)
+  if (targetLabel.length() > 0 && label != targetLabel) return;
 
-  // "Center" zone calculation
-  int center = iw / 2;
+  // 3) center zone
+  int center   = iw / 2;
   int deadband = (int)(iw * centerDeadbandRatio);
   int left_th  = center - deadband;
   int right_th = center + deadband;
 
-  // If object already very close -> stop & back to scan mode
+  // 4) close enough to cup? -> stop + trigger arm
   if (w > (int)(iw * stopWidthRatio)) {
     stopMotors();
-    mode = MODE_SCAN;    // re-scan after reaching object
+
+    // ----- trigger arm pickup+drop -----
+    Serial.println("Cup reached, triggering arm...");
+    digitalWrite(ARM_TRIGGER_PIN, HIGH);
+    delay(100);                 // short pulse
+    digitalWrite(ARM_TRIGGER_PIN, LOW);
+
+    // give time for arm to finish (tune as needed)
+    delay(5000);
+
+    mode = MODE_SCAN;           // after that, go back to scanning
     return;
   }
 
+  // 5) normal follow logic
   if (mode == MODE_SCAN) {
-    // We are rotating 360. Once we see object:
     if (cx < left_th) {
-      // object on left -> continue turning left
       turnLeft();
     }
     else if (cx > right_th) {
-      // object on right -> rotate right to align
       turnRight();
     }
     else {
-      // object roughly in center -> start going forward
       mode = MODE_APPROACH;
       forward();
     }
   }
   else if (mode == MODE_APPROACH) {
-    // Move toward object, with small steering corrections
     if (cx < left_th) {
       turnLeft();
     }
@@ -199,16 +206,16 @@ void processLine(String s) {
   }
 }
 
-// --------- ARDUINO STANDARD FUNCTIONS ---------
+// --------- SETUP / LOOP ---------
 
 void setup() {
   setupMotors();
-  Serial.begin(115200);  // must match ESP32-CAM baud
-  mode = MODE_SCAN;      // start by scanning (360 rotate)
+  Serial.begin(115200);   // must match ESP32-CAM baud
+  mode = MODE_SCAN;
 }
 
 void loop() {
-  // --- Read serial from ESP32-CAM line by line ---
+  // Read Serial line from ESP32-CAM
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n') {
@@ -224,15 +231,14 @@ void loop() {
 
   unsigned long now = millis();
 
-  // --- Mode handling ---
-
+  // mode handling
   if (mode == MODE_SCAN) {
-    // keep rotating (simple 360 scan)
+    // keep rotating until we see cup
     turnLeft();
   }
 
   if (mode == MODE_APPROACH) {
-    // If no detection for some time, fall back to scan mode
+    // if we lost detection for some time, back to scan
     if (now - lastDetectionTime > lostTimeout) {
       mode = MODE_SCAN;
     }
