@@ -1,156 +1,127 @@
 // server.js
+
 require('dotenv').config();
-const path = require('path');
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
 const cors = require('cors');
+const { Server } = require('socket.io');
 const mqtt = require('mqtt');
 const jwt = require('jsonwebtoken');
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*' }
+});
+
+app.use(cors());
+app.use(express.json());
 
 // ====== Config ======
 const PORT = process.env.PORT || 3001;
 const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://test.mosquitto.org';
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
 
-// ====== Middlewares ======
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-
-// ====== Socket.IO ======
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-  },
-});
-
 // ====== Dummy Users ======
 const users = [
   { id: 1, username: 'admin', password: '1234' },
-  { id: 2, username: 'user', password: '1234' },
+  { id: 2, username: 'user',  password: '1234' }
 ];
 
-// ====== JWT helper ======
-function verifyToken(token) {
-  if (!token) return null;
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch (err) {
-    return null;
-  }
-}
-
 // ====== MQTT Setup ======
-const mqttClient = mqtt.connect(MQTT_BROKER, {
-  reconnectPeriod: 5000,
-  connectTimeout: 10 * 1000,
-});
+const mqttClient = mqtt.connect(MQTT_BROKER);
 
 mqttClient.on('connect', () => {
-  console.log('✅ Connected to MQTT broker:', MQTT_BROKER);
+  console.log('Connected to MQTT broker:', MQTT_BROKER);
   mqttClient.subscribe('smarttrashcan/#', (err) => {
-    if (err) console.error('❌ Failed to subscribe', err);
-    else console.log('✅ Subscribed to smarttrashcan/#');
+    if (err) {
+      console.error('MQTT subscribe error:', err.message);
+    } else {
+      console.log('Subscribed to smarttrashcan/# topics');
+    }
   });
 });
 
 mqttClient.on('error', (err) => {
-  console.error('⚠️ MQTT error:', err.message);
-});
-
-mqttClient.on('reconnect', () => {
-  console.log('🔄 MQTT client reconnecting...');
-});
-
-mqttClient.on('offline', () => {
-  console.log('⚠️ MQTT client offline');
+  console.error('MQTT error:', err.message);
 });
 
 mqttClient.on('message', (topic, message) => {
-  let data;
+  // NodeMCU publishes JSON
+  let data = null;
   try {
     data = JSON.parse(message.toString());
-  } catch (err) {
-    console.error('MQTT parse error on', topic, err);
+  } catch (e) {
+    console.error('MQTT parse error:', e.message, 'topic:', topic);
     return;
   }
 
-  switch (topic) {
-    case 'smarttrashcan/health':
-      io.emit('health_update', data);
-      break;
-    case 'smarttrashcan/accuracy':
-      io.emit('accuracy_update', data);
-      break;
-    case 'smarttrashcan/detection':
-      io.emit('detection_update', data);
-      break;
-    case 'smarttrashcan/activity':
-      io.emit('chart_update', data);
-      break;
-    default:
-      console.log('MQTT message on', topic, data);
+  if (topic === 'smarttrashcan/health') {
+    io.emit('health_update', data);
+  }
+  else if (topic === 'smarttrashcan/accuracy') {
+    io.emit('accuracy_update', data);
+  }
+  else if (topic === 'smarttrashcan/detection') {
+    io.emit('detection_update', data);
+  }
+  else if (topic === 'smarttrashcan/activity') {
+    io.emit('chart_update', data);
+  }
+  // optional - ack feedback
+  else if (topic === 'smarttrashcan/feedback_ack') {
+    // you can forward to frontend if needed
+    // io.emit('feedback_ack', data);
   }
 });
 
-// ====== Socket.IO events ======
+// ====== Socket.IO (browser <-> server) ======
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
+  // Manual control from dashboard
   socket.on('manual_control', ({ command, token }) => {
-    const user = verifyToken(token);
-    if (!user) {
-      socket.emit('error_message', { message: 'Invalid or missing token' });
+    console.log('Manual command:', command);
+
+    // (Optional) JWT check
+    if (!token) {
+      socket.emit('error_message', { message: 'No token' });
+      return;
+    }
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      socket.emit('error_message', { message: 'Invalid token' });
       return;
     }
 
-    const allowed = ['F', 'B', 'L', 'R', 'S', 'P', 'D', 'X'];
-    if (!allowed.includes(command)) {
-      socket.emit('error_message', { message: 'Invalid command' });
-      return;
-    }
-
-    console.log(`Manual command from ${user.username}:`, command);
-
+    // Publish to NodeMCU via MQTT
     mqttClient.publish(
       'smarttrashcan/manual',
-      JSON.stringify({ command, user: user.username }),
-      (err) => {
-        if (err) {
-          console.error('Failed to publish manual command:', err);
-          socket.emit('error_message', { message: 'MQTT publish failed' });
-        }
-      }
+      JSON.stringify({ command }),
+      { qos: 0, retain: false }
     );
   });
 
+  // ML feedback from dashboard
   socket.on('ml_feedback', ({ id, feedback, token }) => {
-    const user = verifyToken(token);
-    if (!user) {
-      socket.emit('error_message', { message: 'Invalid or missing token' });
+    console.log('ML feedback:', id, feedback);
+
+    if (!token) {
+      socket.emit('error_message', { message: 'No token' });
       return;
     }
-
-    if (!['correct', 'incorrect'].includes(feedback)) {
-      socket.emit('error_message', { message: 'Invalid feedback type' });
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      socket.emit('error_message', { message: 'Invalid token' });
       return;
     }
-
-    console.log(`ML feedback from ${user.username}:`, id, feedback);
 
     mqttClient.publish(
       'smarttrashcan/feedback',
-      JSON.stringify({ id, feedback, user: user.username }),
-      (err) => {
-        if (err) {
-          console.error('Failed to publish feedback:', err);
-          socket.emit('error_message', { message: 'MQTT publish failed' });
-        }
-      }
+      JSON.stringify({ id, feedback }),
+      { qos: 0, retain: false }
     );
   });
 
@@ -160,56 +131,54 @@ io.on('connection', (socket) => {
 });
 
 // ====== REST API ======
+
+// Simple health check
 app.get('/', (req, res) => {
   res.send('Smart Trashcan Backend Running');
 });
 
+// Login
 app.post('/login', (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password)
-      return res
-        .status(400)
-        .json({ message: 'Username and password required' });
+      return res.status(400).json({ message: 'Username and password required' });
 
     const user = users.find(
-      (u) => u.username === username && u.password === password
+      u => u.username === username && u.password === password
     );
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    if (!user)
+      return res.status(401).json({ message: 'Invalid credentials' });
 
     const token = jwt.sign(
       { id: user.id, username: user.username },
       JWT_SECRET,
       { expiresIn: '1h' }
     );
-    return res.json({ token });
-  } catch (err) {
-    console.error('Login error', err);
-    return res.status(500).json({ message: 'Internal server error' });
+
+    res.json({ token });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Internal server error' });
   }
 });
 
+// Example protected route (optional)
 app.get('/profile', (req, res) => {
   const authHeader = req.headers['authorization'];
   if (!authHeader)
-    return res.status(401).json({ message: 'No token provided' });
+    return res.status(401).json({ message: 'No token' });
 
   const token = authHeader.split(' ')[1];
-  const decoded = verifyToken(token);
-  if (!decoded) return res.status(403).json({ message: 'Invalid token' });
-
-  res.json({ profile: decoded });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    res.json({ profile: decoded });
+  } catch (e) {
+    res.status(403).json({ message: 'Invalid token' });
+  }
 });
 
-// Optional: serve React build
-if (process.env.SERVE_REACT === 'true') {
-  const buildPath = path.join(__dirname, 'build');
-  app.use(express.static(buildPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(buildPath, 'index.html'));
-  });
-}
-
+// ====== Start server ======
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Backend running on http://localhost:${PORT}`);
 });
