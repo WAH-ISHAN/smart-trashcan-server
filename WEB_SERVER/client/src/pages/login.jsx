@@ -1,11 +1,12 @@
+// src/components/Login.js 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
-const BACKEND_URL = 'http://localhost:3001'; // <-- add backend URL here
-
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../firebase'; 
 const Login = () => {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('1234'); // matches backend dummy user
+  // Firebase email/password 
+  const [email, setEmail] = useState('yeshminathasha@gmail.com'); 
+  const [password, setPassword] = useState('123456');        
   const [message, setMessage] = useState('');
   const navigate = useNavigate();
 
@@ -14,49 +15,64 @@ const Login = () => {
     setMessage('');
 
     try {
-      const res = await fetch(`${BACKEND_URL}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.trim(),
-          password
-        })
-      });
+      // Firebase Auth login
+      await signInWithEmailAndPassword(auth, email.trim(), password);
 
-      if (res.ok) {
-        const data = await res.json();
-        localStorage.setItem('trashcan_token', data.token);
-        navigate('/dashboard', { replace: true });
-      } else {
-        const errData = await res.json().catch(() => null);
-        setMessage(errData?.message || 'Error: Invalid username or password.');
+      // login success toward dashboard 
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      console.error(err);
+      // error code msg
+      switch (err.code) {
+        case 'auth/user-not-found':
+        case 'auth/wrong-password':
+          setMessage('Invalid email or password.');
+          break;
+        case 'auth/too-many-requests':
+          setMessage('Too many attempts. Please try again later.');
+          break;
+        default:
+          setMessage('Login failed: ' + err.code);
       }
-    } catch {
-      setMessage('Error: Could not connect to server.');
     }
   };
 
   return (
-    <div className="login-container">
-      <h2>Smart Trashcan Login</h2>
-      <form id="loginForm" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          placeholder="Username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <button type="submit">Login</button>
-      </form>
-      <p>{message}</p>
+    <div className="login-page">
+      <div className="login-container">
+        <h2>Smart Trashcan</h2>
+        <p className="login-subtitle">Admin Dashboard Login</p>
+
+        <form id="loginForm" className="login-form" onSubmit={handleSubmit}>
+          <label>
+            Email
+            <input
+              type="email"
+              placeholder="Enter email"
+              value={email}
+              autoComplete="email"
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              placeholder="Enter password"
+              value={password}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </label>
+
+          {message && <div className="error-msg">{message}</div>}
+
+          <button type="submit">Login</button>
+        </form>
+      </div>
     </div>
   );
 };

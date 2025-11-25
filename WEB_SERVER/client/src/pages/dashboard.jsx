@@ -1,9 +1,16 @@
+// src/pages/dashboard.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Chart from 'chart.js/auto';
+import { auth } from '../firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 
-const ESP32_BASE_URL = 'http://192.168.4.1'; // ESP32-CAM IP (AP mode)
+// ESP32-CAM router IP 
+const ESP32_BASE_URL = 'http://192.168.4.1';
+
+// Backend URL (Node.js / Socket.IO server)
+const BACKEND_URL = 'http://localhost:3001';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -17,25 +24,43 @@ const Dashboard = () => {
   const [detections, setDetections] = useState([]);
   const [activityCounts, setActivityCounts] = useState([0, 0, 0]);
   const [frameTs, setFrameTs] = useState(Date.now());
+  const [idToken, setIdToken] = useState(null); // Firebase ID token
 
   const socketRef = useRef(null);
   const chartCanvasRef = useRef(null);
   const chartInstanceRef = useRef(null);
-  const tokenRef = useRef(localStorage.getItem('trashcan_token'));
 
-  // Token check + Socket.IO connection
+  // Firebase auth listener –
   useEffect(() => {
-    if (!tokenRef.current) {
-      alert('Please login first');
-      navigate('/login', { replace: true });
-      return;
-    }
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setIdToken(null);
+        navigate('/login', { replace: true });
+      } else {
+        const token = await user.getIdToken();
+        setIdToken(token);
+      }
+    });
 
-    const socket = io(); // same-origin/proxy
+    return () => unsub();
+  }, [navigate]);
+
+  // Socket.IO connection – Firebase token set unaama connect wenawa
+  useEffect(() => {
+    if (!idToken) return;
+
+    const socket = io(BACKEND_URL, {
+      transports: ['websocket'],
+      auth: { token: idToken }, // backend eken ID token verify karanna puluwan
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
       console.log('Socket connected:', socket.id);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
     });
 
     socket.on('error_message', (msg) => {
@@ -57,7 +82,7 @@ const Dashboard = () => {
     socket.on('detection_update', (data) => {
       setDetections((prev) => {
         const real = prev.filter((d) => !d.__placeholder);
-        return [data, ...real];
+        return [data, ...real].slice(0, 20); // keep last 20
       });
     });
 
@@ -71,8 +96,10 @@ const Dashboard = () => {
       });
     });
 
-    return () => socket.disconnect();
-  }, [navigate]);
+    return () => {
+      socket.disconnect();
+    };
+  }, [idToken]);
 
   // Init Chart.js
   useEffect(() => {
@@ -112,7 +139,7 @@ const Dashboard = () => {
     };
   }, []);
 
-  // Update chart on counts change
+  // Update chart when counts change
   useEffect(() => {
     const chart = chartInstanceRef.current;
     if (!chart) return;
@@ -130,23 +157,23 @@ const Dashboard = () => {
 
   const sendCommand = (cmd) => {
     const socket = socketRef.current;
-    const token = tokenRef.current;
-    if (!socket || !token) return;
-    socket.emit('manual_control', { command: cmd, token });
+    if (!socket || !idToken) return;
+    socket.emit('manual_control', { command: cmd, token: idToken });
   };
 
-  const logout = () => {
-    localStorage.removeItem('trashcan_token');
-    tokenRef.current = null;
-    navigate('/login', { replace: true });
+  const logout = async () => {
+    try {
+      await signOut(auth);
+    } finally {
+      navigate('/login', { replace: true });
+    }
   };
 
   const sendFeedback = (id, feedback) => {
     const socket = socketRef.current;
-    const token = tokenRef.current;
-    if (!socket || !token) return;
+    if (!socket || !idToken) return;
 
-    socket.emit('ml_feedback', { id, feedback, token });
+    socket.emit('ml_feedback', { id, feedback, token: idToken });
 
     setDetections((prev) =>
       prev.map((det) => (det.id === id ? { ...det, status: feedback } : det))
@@ -215,8 +242,8 @@ const Dashboard = () => {
         <h3>ESP32 Live Stream</h3>
         <img
           src={`${ESP32_BASE_URL}/jpg?t=${frameTs}`}
-          width="640"
-          height="480"
+          width="320"
+          height="240"
           alt="ESP32 live stream"
         />
       </div>
@@ -225,11 +252,11 @@ const Dashboard = () => {
       <div className="dash-box">
         <h3>Hardware Template</h3>
         <div className="template-diagram">
-          <p>[ESP32] --- [Motor Driver] --- [Motors]</p>
-          <p>|</p>
-          <p>[Servo Controller] --- [Arm Servos]</p>
-          <p>|</p>
-          <p>[MQTT / Socket.IO Server]</p>
+          <p>[ESP32-CAM] --- WiFi --- [NodeMCU]</p>
+          <p>[NodeMCU] --- I2C --- [Arduino Nano]</p>
+          <p>[Nano] --- [Motor Driver] --- [Motors]</p>
+          <p>[Nano] --- [Servos] --- [Robo Arm]</p>
+          <p>[Node.js + MQTT] --- [React Dashboard]</p>
         </div>
       </div>
 
