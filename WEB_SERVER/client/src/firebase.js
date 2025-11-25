@@ -6,14 +6,15 @@ import { getAuth } from "firebase/auth";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyC7J9i59Roh3fOaPMyZ2vfdrrHyj1pXNPY",
-  authDomain: "iot-project-aa09f.firebaseapp.com",
-  databaseURL: "https://iot-project-aa09f-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "iot-project-aa09f",
-  storageBucket: "iot-project-aa09f.firebasestorage.app",
-  messagingSenderId: "842402153818",
-  appId: "1:842402153818:web:283967157513e1b9e9df63",
+  apiKey: import.meta.env.VITE_API_KEY,
+  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_DB_URL,
+  projectId: import.meta.env.VITE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_MSG_SENDER,
+  appId: import.meta.env.VITE_APP_ID,
 };
+
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
