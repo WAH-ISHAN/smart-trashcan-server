@@ -1,0 +1,320 @@
+// working code
+
+#include <Wire.h>
+#include <Servo.h>
+
+const int ENA = 3;
+const int IN1 = 5; // left motor
+const int IN2 = 6;
+
+const int ENB = 11;
+const int IN3 = 9; // right motor
+const int IN4 = 10;
+
+const int BASE_PIN = 7;
+const int SHOULDER_PIN = 8;
+const int ELBOW_PIN = 4;
+const int GRIPPER_PIN = 12;
+
+Servo servoBase;
+Servo servoShoulder;
+Servo servoElbow;
+Servo servoGripper;
+
+// Base
+int baseCenter = 90; // arm front-center
+int baseToBin = 0;
+
+// Shoulder
+int shoulderUp = 40; // arm up
+int shoulderDown = 110;
+
+// Elbow
+int elbowUp = 60;    // elbow fold up
+int elbowDown = 120; // elbow down / extend towards object
+
+// Gripper
+int gripperOpen = 80;   // open
+int gripperClosed = 20; // close
+
+// I2C address for this Nano
+const byte I2C_ADDRESS = 8;
+
+// ------------- Motor helpers -------------
+
+void motors_init()
+{
+    pinMode(ENA, OUTPUT);
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT);
+
+    pinMode(ENB, OUTPUT);
+    pinMode(IN3, OUTPUT);
+    pinMode(IN4, OUTPUT);
+
+    // initial speed (~80%)
+    analogWrite(ENA, 200);
+    analogWrite(ENB, 200);
+
+    motors_stop();
+}
+
+void motors_forward()
+{
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+
+    digitalWrite(IN3, HIGH);
+    digitalWrite(IN4, LOW);
+}
+
+void motors_backward()
+{
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, HIGH);
+}
+
+void motors_left()
+{
+    // left motor backward, right forward
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+
+    digitalWrite(IN3, HIGH);
+    digitalWrite(IN4, LOW);
+}
+
+void motors_right()
+{
+    // left motor forward, right backward
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, HIGH);
+}
+
+void motors_stop()
+{
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, LOW);
+}
+
+// ------------- Arm helpers (4 servos) -------------
+
+void arm_init()
+{
+    servoBase.attach(BASE_PIN);
+    servoShoulder.attach(SHOULDER_PIN);
+    servoElbow.attach(ELBOW_PIN);
+    servoGripper.attach(GRIPPER_PIN);
+
+    servoBase.write(baseCenter);
+    servoShoulder.write(shoulderUp);
+    servoElbow.write(elbowUp);
+    servoGripper.write(gripperOpen);
+    delay(500);
+}
+
+void arm_reset()
+{
+    servoBase.write(baseCenter);
+    delay(200);
+
+    servoShoulder.write(shoulderUp);
+    servoElbow.write(elbowUp);
+    delay(300);
+
+    servoGripper.write(gripperOpen);
+    delay(200);
+}
+
+void arm_pick()
+{
+    motors_stop(); // safety
+
+    // 1) Base front-center
+    servoBase.write(baseCenter);
+    delay(400);
+
+    // 2) Slowly bring shoulder + elbow down together
+    int maxSteps = max(shoulderDown - shoulderUp, elbowDown - elbowUp);
+    for (int step = 0; step <= maxSteps; step += 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(200);
+
+    // 3) Close gripper (pick object)
+    for (int a = gripperOpen; a >= gripperClosed; a -= 2)
+    {
+        servoGripper.write(a);
+        delay(20);
+    }
+    delay(300);
+
+    // 4) Lift arm up again (shoulder + elbow up)
+    for (int step = maxSteps; step >= 0; step -= 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(300);
+}
+
+void arm_drop()
+{
+    motors_stop(); // safety
+
+    // 1) Rotate base towards bin
+    servoBase.write(baseToBin);
+    delay(500);
+
+    // 2) Shoulder + elbow down again
+    int maxSteps = max(shoulderDown - shoulderUp, elbowDown - elbowUp);
+    for (int step = 0; step <= maxSteps; step += 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(200);
+
+    // 3) Open gripper (drop)
+    for (int a = gripperClosed; a <= gripperOpen; a += 2)
+    {
+        servoGripper.write(a);
+        delay(20);
+    }
+    delay(300);
+
+    // 4) Lift arm up again
+    for (int step = maxSteps; step >= 0; step -= 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(300);
+
+    // 5) Return base to front-center
+    servoBase.write(baseCenter);
+    delay(300);
+}
+
+void processCommand(char c)
+{
+    Serial.print("CMD: ");
+    Serial.println(c);
+
+    switch (c)
+    {
+    // Car chassis
+    case 'F':
+        motors_forward();
+        break;
+    case 'B':
+        motors_backward();
+        break;
+    case 'L':
+        motors_left();
+        break;
+    case 'R':
+        motors_right();
+        break;
+    case 'S':
+        motors_stop();
+        break;
+
+    // Robo arm
+    case 'P':
+        arm_pick();
+        break;
+    case 'D':
+        arm_drop();
+        break;
+    case 'X':
+        arm_reset();
+        break;
+
+    default:
+        // ignore unknown
+        break;
+    }
+}
+
+// I2C receive callback (from NodeMCU / ESP8266)
+void receiveEvent(int numBytes)
+{
+    while (Wire.available())
+    {
+        char c = Wire.read();
+        processCommand(c);
+    }
+}
+
+void setup()
+{
+    Serial.begin(9600);
+    motors_init();
+    arm_init();
+
+    // I2C slave init
+    Wire.begin(I2C_ADDRESS);
+    Wire.onReceive(receiveEvent);
+
+    Serial.println("Nano robot controller ready (car + 4-servo arm).");
+}
+
+void loop()
+{
+    // Optional: test commands via Serial Monitor
+    if (Serial.available())
+    {
+        char c = Serial.read();
+        processCommand(c);
+    }
+
+    delay(10);
+}
