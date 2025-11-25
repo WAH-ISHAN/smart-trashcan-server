@@ -1,0 +1,138 @@
+// ------------- Arm helpers (4 servos) -------------
+
+void arm_init()
+{
+    servoBase.attach(BASE_PIN);
+    servoShoulder.attach(SHOULDER_PIN);
+    servoElbow.attach(ELBOW_PIN);
+    servoGripper.attach(GRIPPER_PIN);
+
+    servoBase.write(baseCenter);
+    servoShoulder.write(shoulderUp);
+    servoElbow.write(elbowUp);
+    servoGripper.write(gripperOpen);
+    delay(500);
+}
+
+void arm_reset()
+{
+    servoBase.write(baseCenter);
+    delay(200);
+
+    servoShoulder.write(shoulderUp);
+    servoElbow.write(elbowUp);
+    delay(300);
+
+    servoGripper.write(gripperOpen);
+    delay(200);
+}
+
+// object එක ගන්න sequence (front එකේ තියෙන කුණු එකට)
+void arm_pick()
+{
+    motors_stop(); // safety
+
+    // 1) Base front-center
+    servoBase.write(baseCenter);
+    delay(400);
+
+    // 2) Slowly bring shoulder + elbow down together
+    int maxSteps = max(shoulderDown - shoulderUp, elbowDown - elbowUp);
+    for (int step = 0; step <= maxSteps; step += 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(200);
+
+    // 3) Close gripper (pick object)
+    for (int a = gripperOpen; a >= gripperClosed; a -= 2)
+    {
+        servoGripper.write(a);
+        delay(20);
+    }
+    delay(300);
+
+    // 4) Lift arm up again (shoulder + elbow up)
+    for (int step = maxSteps; step >= 0; step -= 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(300);
+}
+
+// dust bin එකට දාන්න sequence
+void arm_drop()
+{
+    motors_stop(); // safety
+
+    // 1) Rotate base towards bin
+    servoBase.write(baseToBin);
+    delay(500);
+
+    // 2) Shoulder + elbow down again
+    int maxSteps = max(shoulderDown - shoulderUp, elbowDown - elbowUp);
+    for (int step = 0; step <= maxSteps; step += 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(200);
+
+    // 3) Open gripper (drop)
+    for (int a = gripperClosed; a <= gripperOpen; a += 2)
+    {
+        servoGripper.write(a);
+        delay(20);
+    }
+    delay(300);
+
+    // 4) Lift arm up again
+    for (int step = maxSteps; step >= 0; step -= 2)
+    {
+        int s = shoulderUp + step;
+        int e = elbowUp + step;
+
+        if (s > shoulderDown)
+            s = shoulderDown;
+        if (e > elbowDown)
+            e = elbowDown;
+
+        servoShoulder.write(s);
+        servoElbow.write(e);
+        delay(20);
+    }
+    delay(300);
+
+    // 5) Return base to front-center
+    servoBase.write(baseCenter);
+    delay(300);
+}
