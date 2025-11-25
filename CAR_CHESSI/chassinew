@@ -218,7 +218,6 @@ void arm_reset() {
   delay(200);
 }
 
-// object එක ගන්න sequence (front එකේ තියෙන කුණු එකට)
 void arm_pick() {
   motors_stop();   // safety
 
@@ -263,7 +262,6 @@ void arm_pick() {
   delay(300);
 }
 
-// dust bin එකට දාන්න sequence
 void arm_drop() {
   motors_stop(); // safety
 
