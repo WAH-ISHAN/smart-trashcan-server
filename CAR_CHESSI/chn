@@ -1,0 +1,20 @@
+// ----- Extra behaviours for search / escape -----
+
+// Car chassis එකේ 360° වගේ rotation එකක් (in-place spin)
+// මෙහි delay value එකට අනුව පොඩි ලෙස adjust කරන්න.
+// උදා: 1000ms -> ලොකුෙ ගේ කුඩා සර්කල්, 1500ms -> තවත් වැඩි ...
+void rotate360() {
+  // left in-place rotation
+  motors_left();
+  delay(1200);   // <-- Chassis අනුව tune කරන්න (1.0s ~ 1.5s වගේ)
+  motors_stop();
+}
+
+// "escape" → මේ තැනින් පිටතට පිටවෙන්න,
+// යම් කාලයක් backward ගිහිල්ල stop කරනවා.
+// උදා: black camera image / පොලීම්ට අරාමට පිටතට යවන්න.
+void escapeFromSpot() {
+  motors_backward();
+  delay(1500);   // <-- distance අනුව adjust කරන්න
+  motors_stop();
+}
